@@ -46,6 +46,7 @@ from .shadow_hand import ShadowHand
 from .allegro_hand import AllegroHand
 from .dextreme.allegro_hand_dextreme import AllegroHandDextremeManualDR, AllegroHandDextremeADR
 from .trifinger import Trifinger
+from .qbhand_grasp import SoftGrasp
 
 
 # Mappings from strings to environments
@@ -71,4 +72,5 @@ isaacgym_task_map = {
     "Quadcopter": Quadcopter,
     "ShadowHand": ShadowHand,
     "Trifinger": Trifinger,
+    "SoftGrasp": SoftGrasp,
 }
