@@ -8,7 +8,7 @@ from isaacgym.torch_utils import *
 
 from isaacgymenvs.utils.torch_jit_utils import *
 from isaacgymenvs.tasks.base.vec_task import VecTask
-from isaacgymenvs.tasks.grasp_sampler import load_model, GraspModel
+#from isaacgymenvs.tasks.grasp_sampler import load_model, GraspModel
 
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
