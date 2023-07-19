@@ -36,6 +36,7 @@ class SoftGrasp(VecTask):
             "r_lift_scale": self.cfg["env"]["liftRewardScale"],
             "r_lift_height_scale": self.cfg["env"]["liftHeightRewardScale"],
             "r_actions_reg_scale": self.cfg["env"]["actionsRegularizationRewardScale"],
+            "r_object_rot_scale": self.cfg["env"]["objectRotation"],
         }
 
         # Arm controller type
@@ -548,7 +549,7 @@ def compute_robot_reward(
 
     # distance from grasp link to the object
     d_eef = torch.norm(states["object_pos_relative"], dim=-1)
-    dist_reward = 1 - torch.tanh(5 * d_eef)
+    dist_reward = 1 - torch.tanh(2 * d_eef)
 
     # distance from fingertips to the object
     d_fftip = torch.norm(states["fftip_pos"] - states["object_pos"], dim=-1)
@@ -562,9 +563,17 @@ def compute_robot_reward(
 
     # reward for lifting object
     object_height = states["object_pos"][:, 2]
-    object_lifted = object_height > 0.45
-    lift_reward = object_lifted
-    lift_height = object_height - 0.3
+    object_lifted = object_height > 0.45	# here is the reward that checks if object is lifted
+    lift_reward = object_lifted		# 1 for lifted; 0 for not
+    lift_height = object_height - 0.3		# reward for how high it has been lifted.
+    object_grasped = object_height > 0.35
+
+    # object rotation (object_quat) 
+    # check the z axis of the object and the grasp to see if it matches
+    # use object_lifted as an 'if' to apply on when the object is lifted
+    grasp_axis = tf_vector(states["object_quat"], grasp_up_axis)
+    dot = torch.bmm(grasp_axis.view(num_envs, 1, 3), grasp_up_axis.view(num_envs, 3, 1)).squeeze(-1).squeeze(-1)
+    objrot_reward = object_grasped*torch.sign(dot) * dot ** 2
 
     # Regularization on the actions
     action_penalty = torch.sum(actions ** 2, dim=-1)
@@ -574,7 +583,8 @@ def compute_robot_reward(
             + reward_settings["r_fintip_scale"] * fintip_reward \
             + reward_settings["r_lift_scale"] * lift_reward \
             + reward_settings["r_lift_height_scale"] * lift_height \
-            # + reward_settings["r_actions_reg_scale"] * action_penalty
+            + reward_settings["r_actions_reg_scale"] * action_penalty \
+            + reward_settings["r_object_rot_scale"] * objrot_reward
 
     # Compute resets
     # reset_buf = torch.where((progress_buf >= max_episode_length - 1) | (lift_reward > 0), torch.ones_like(reset_buf), reset_buf)
@@ -586,7 +596,8 @@ def compute_robot_reward(
                    "Fingertips Reward": reward_settings["r_fintip_scale"] * fintip_reward,
                    "Lift Reward": reward_settings["r_lift_scale"] * lift_reward,
                    "Lift Height Reward": reward_settings["r_lift_height_scale"] * lift_reward,
-                   "Action Regularization Reward": reward_settings["r_actions_reg_scale"] * action_penalty,}
+                   "Action Regularization Reward": reward_settings["r_actions_reg_scale"] * action_penalty,
+                   "Object Rotation Reward": reward_settings["r_object_rot_scale"] * objrot_reward,}
 
     return rewards, reset_buf, reward_dict
 
