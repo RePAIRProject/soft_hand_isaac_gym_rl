@@ -5,9 +5,9 @@ physics_engine: ${..physics_engine}
 
 # if given, will override the device setting in gym. 
 env:
-  numEnvs: ${resolve_default:4096,${...num_envs}}
+  numEnvs: ${resolve_default:8192,${...num_envs}}
   envSpacing: 1.5
-  episodeLength: 500
+  episodeLength: 200
   enableDebugVis: False
 
   clipObservations: 5.0
@@ -15,20 +15,22 @@ env:
 
   startPositionNoise: 0.25
   startRotationNoise: 0.785
-  robotPositionNoise: 0.0
-  robotRotationNoise: 0.0
+  robotPositionNoise: 0.0    # Added noise (0.0)
+  robotRotationNoise: 0.0    # Added noise (0.0)
   robotDofNoise: 0.
 
   aggregateMode: 3
 
   actionScale: 1.0
-  distRewardScale: 1.5
+  distRewardScale: 1.5  # 1.5
   rotationRewardScale: 0.2
+  fingertipRewardScale: 1.5 # 1.5
   liftRewardScale: 15.0
-  fingertipRewardScale: 1.5
   fingertipDistanceScale: 10.0
-  liftHeightRewardScale: 15.0
+  liftHeightRewardScale: 0.0
   actionsRegularizationRewardScale: 0.0
+  objectRotation: 10.0
+  placeScale: 40.0
 
   armControlType: osc  # options are {osc, pos}
   handControlType: binary # options are {binary}
@@ -52,8 +54,8 @@ sim:
     rest_offset: 0.0
     bounce_threshold_velocity: 0.2
     max_depenetration_velocity: 1000.0
-    default_buffer_size_multiplier: 5.0
-    max_gpu_contact_pairs: 1048576 # 1024*1024
+    default_buffer_size_multiplier: 10000 # I increased this value (5) too much; no effect
+    max_gpu_contact_pairs: 10485760 # 1024*1024	# I increased this value a factor of 10
     num_subscenes: ${....num_subscenes}
     contact_collection: 0 # 0: CC_NEVER (don't collect contact info), 1: CC_LAST_SUBSTEP (collect only contacts on last substep), 2: CC_ALL_SUBSTEPS (default - all contacts)
 

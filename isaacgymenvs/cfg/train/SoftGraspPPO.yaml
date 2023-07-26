@@ -34,10 +34,9 @@ params:
   load_path: ${...checkpoint} # path to the checkpoint to load
 
   config:
-    name: ${resolve_default:SeedGrasp,${....experiment}}
+    name: ${resolve_default:QbHand,${....experiment}}
     full_experiment_name: ${.name}
     env_name: rlgpu
-    multi_gpu: ${....multi_gpu}
     ppo: True
     mixed_precision: False
     normalize_input: True
@@ -52,8 +51,8 @@ params:
     learning_rate: 0.0005
     lr_schedule: adaptive
     schedule_type: standard
-    kl_threshold: 0.018
-    score_to_win: 10000
+    kl_threshold: 0.018 # 0.008 before
+    score_to_win: 500000
     max_epochs: ${resolve_default:10000,${....max_iterations}}
     save_best_after: 200
     save_frequency: 100
@@ -63,7 +62,7 @@ params:
     truncate_grads: True
     e_clip: 0.2
     horizon_length: 32
-    minibatch_size: 1024
+    minibatch_size: 1024 #1024
     mini_epochs: 1
     critic_coef: 2
     clip_value: True
