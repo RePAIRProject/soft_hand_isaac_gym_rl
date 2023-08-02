@@ -46,7 +46,7 @@ from .shadow_hand import ShadowHand
 from .allegro_hand import AllegroHand
 from .dextreme.allegro_hand_dextreme import AllegroHandDextremeManualDR, AllegroHandDextremeADR
 from .trifinger import Trifinger
-from .qbhand_pick_and_place import SoftGrasp
+from .qbhand_pick_place import SoftGrasp
 
 
 # Mappings from strings to environments
