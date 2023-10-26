@@ -7,7 +7,7 @@ physics_engine: ${..physics_engine}
 env:
   numEnvs: ${resolve_default:8192,${...num_envs}}
   envSpacing: 1.5
-  episodeLength: 800
+  episodeLength: 1000
   enableDebugVis: False
 
   clipObservations: 5.0
@@ -25,12 +25,13 @@ env:
   distRewardScale: 1.5  # 1.5
   rotationRewardScale: 0.2
   fingertipRewardScale: 1.5 # 1.5
-  liftRewardScale: 15.0
+  liftRewardScale: 10.0
   fingertipDistanceScale: 10.0
-  liftHeightRewardScale: 0.0
+  liftHeightRewardScale: 10.0
   actionsRegularizationRewardScale: 0.0
   objectRotation: 10.0
   placeScale: 40.0
+  releaseScale: 40.0
 
   armControlType: osc  # options are {osc, pos}
   handControlType: binary # options are {binary}

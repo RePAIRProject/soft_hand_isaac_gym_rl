@@ -4,6 +4,7 @@ import torch
 
 from isaacgym import gymtorch
 from isaacgym import gymapi
+from isaacgym import gymutil
 from isaacgym.torch_utils import *
 
 from isaacgymenvs.utils.torch_jit_utils import *
@@ -12,6 +13,7 @@ from isaacgymenvs.tasks.base.vec_task import VecTask
 
 from scipy.interpolate import interp1d
 import matplotlib.pyplot as plt
+
 
 class SoftGrasp(VecTask):
     def __init__(self, cfg, rl_device, sim_device, graphics_device_id, headless, virtual_screen_capture, force_render):
@@ -37,6 +39,8 @@ class SoftGrasp(VecTask):
             "r_lift_height_scale": self.cfg["env"]["liftHeightRewardScale"],
             "r_actions_reg_scale": self.cfg["env"]["actionsRegularizationRewardScale"],
             "r_object_rot_scale": self.cfg["env"]["objectRotation"],
+            "r_place_scale": self.cfg["env"]["placeScale"],
+            "r_release_scale": self.cfg["env"]["releaseScale"],
         }
 
         # Arm controller type
@@ -53,7 +57,7 @@ class SoftGrasp(VecTask):
         # obs include: object_pose (7) + eef_pose (7) + relative_object_eef_pos (3) 
         # if hand_pos control: + hand_q (17)
         # if hand_synergy control: + hand_q (2)
-        num_obs = 17
+        num_obs = 23
         # if self.hand_control_type == "pos": num_obs += 17
         # elif self.hand_control_type == "synergy": num_obs += 2
         self.cfg["env"]["numObservations"] = num_obs
@@ -125,6 +129,19 @@ class SoftGrasp(VecTask):
 
         # Refresh tensors
         self._refresh()
+
+        # add a sphere
+        self.axes_geom = gymutil.AxesGeometry(0.1)
+        sphere_pose = gymapi.Transform()
+        self.sphere_geom = gymutil.WireframeSphereGeometry(0.05, 15, 15, sphere_pose, color=(1, 0, 0))
+
+        # for plotting
+        # self.fig, self.ax = plt.subplots()
+        # self.lift_reward_list = []
+        # self.lift_height_list = []
+        # self.place_reward_list = []
+        # self.dist_reward_list = []
+        # self.fintip_reward_list = []
 
     def create_sim(self):
         self.sim_params.up_axis = gymapi.UP_AXIS_Z
@@ -212,6 +229,10 @@ class SoftGrasp(VecTask):
         table_start_pose.p = gymapi.Vec3(.7, 0., 0.25)
         table_start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
 
+        table2_start_pose = gymapi.Transform()
+        table2_start_pose.p = gymapi.Vec3(.0, -0.9, 0.25)
+        table2_start_pose.r = gymapi.Quat(0.0, 0.0, 0.0, 1.0)
+
         ## Load object asset
         asset_options = gymapi.AssetOptions()
         asset_options.armature = 0.001
@@ -233,7 +254,7 @@ class SoftGrasp(VecTask):
                                            "urdf/qb_hand/urdf/fresco.urdf",
                                            asset_options)
 
-        self.object_default_state = torch.tensor([0.7, 0.1, 0.3, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.object_default_state = torch.tensor([0.7, 0.0, 0.3, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
 
         object_start_pose = gymapi.Transform()
         object_start_pose.p = gymapi.Vec3(0.4, 0.0, 0.01)
@@ -246,8 +267,8 @@ class SoftGrasp(VecTask):
         num_table_shapes = self.gym.get_asset_rigid_shape_count(table_asset)
         num_object_bodies = self.gym.get_asset_rigid_body_count(object_asset)
         num_object_shapes = self.gym.get_asset_rigid_shape_count(object_asset)
-        max_agg_bodies = num_robot_bodies + num_table_bodies + num_object_bodies
-        max_agg_shapes = num_robot_shapes + num_table_shapes + num_object_shapes
+        max_agg_bodies = num_robot_bodies + num_table_bodies + num_table_bodies + num_object_bodies
+        max_agg_shapes = num_robot_shapes + num_table_shapes + num_table_bodies + num_object_shapes
 
         self.robots = []
         self.envs = []
@@ -265,9 +286,10 @@ class SoftGrasp(VecTask):
 
             # Create table
             table_actor = self.gym.create_actor(env_ptr, table_asset, table_start_pose, "table", i, 1, 0)
+            table_actor1 = self.gym.create_actor(env_ptr, table_asset, table2_start_pose, "table2", i, 2, 0)
 
             # Create object actor
-            self._object_id = self.gym.create_actor(env_ptr, object_asset, object_start_pose, "object", i, 2, 0)
+            self._object_id = self.gym.create_actor(env_ptr, object_asset, object_start_pose, "object", i, 4, 0)
 
             self.gym.end_aggregate(env_ptr)
 
@@ -336,11 +358,14 @@ class SoftGrasp(VecTask):
         self._hand_control = self._pos_control[:, 7:]
 
         # Initialize indices
-        self._global_indices = torch.arange(self.num_envs * 3, dtype=torch.int32,
+        self._global_indices = torch.arange(self.num_envs * 4, dtype=torch.int32,
                                            device=self.device).view(self.num_envs, -1)
 
         self.down_axis = to_torch([0, 0, -1], device=self.device).repeat((self.num_envs, 1))
         self.grasp_up_axis = to_torch([0, 0, 1], device=self.device).repeat((self.num_envs, 1))
+
+        #self.target_pos = to_torch([0., -.9, 0.27], device=self.device).repeat((self.num_envs, 1))
+        self.default_target_pos = torch.tensor([.0, -0.8, 0.27])
 
     def _update_states(self):
         self.states.update({
@@ -358,6 +383,8 @@ class SoftGrasp(VecTask):
             "object_pos_relative": self._object_state[:, :3] - self._eef_state[:, :3],
             "object_fftip_pos_relative": self._object_state[:, :3] - self._fftip_state[:, :3],
             "object_thtip_pos_relative": self._object_state[:, :3] - self._thtip_state[:, :3],
+            "target_pos_relative": self._object_state[:, :3] - self.target_pos,
+            "target_pos": self.target_pos,
         })
 
     def _refresh(self):
@@ -376,9 +403,27 @@ class SoftGrasp(VecTask):
                 self.grasp_up_axis, self.down_axis, self.num_envs,
                 self.reward_settings, self.max_episode_length)
 
+        # self.ax.cla()
+        # self.lift_reward_list.append(reward_dict["Lift Reward"][0].cpu().detach())
+        # self.lift_height_list.append(reward_dict["Lift Height Reward"][0].cpu().detach())
+        # self.place_reward_list.append(reward_dict["Place Reward"][0].cpu().detach())
+        #
+        # self.dist_reward_list.append(reward_dict["Distance Reward"][0].cpu().detach())
+        # self.fintip_reward_list.append(reward_dict["Fingertips Reward"][0].cpu().detach())
+        #
+        # #self.ax.plot(self.lift_reward_list, c='r', label='Lift reward')
+        # #self.ax.plot(self.lift_height_list, c='g', label='Height reward')
+        # #self.ax.plot(self.place_reward_list, c='b', label='Place reward')
+        # self.ax.plot(self.dist_reward_list, c='b', label='Distance reward')
+        # self.ax.plot(self.fintip_reward_list, c='r', label='Fingertip reward')
+        #
+        # self.ax.legend()
+        # plt.draw()
+        # plt.pause(0.00001)
+
     def compute_observations(self):
         self._refresh()
-        obs = ["object_pos", "object_quat", "object_pos_relative", "eef_pos", "eef_quat"]
+        obs = ["object_pos", "object_quat", "object_pos_relative", "target_pos", "target_pos_relative", "eef_pos", "eef_quat"]
         self.obs_buf = torch.cat([self.states[ob] for ob in obs], dim=-1)
 
         maxs = {ob: torch.max(self.states[ob]).item() for ob in obs}
@@ -391,10 +436,16 @@ class SoftGrasp(VecTask):
         pos = tensor_clamp(self.robot_default_dof_pos.unsqueeze(0),
             self.robot_dof_lower_limits.unsqueeze(0), self.robot_dof_upper_limits)
         pos[:, 20] = 1.5
-    
+
         # Reset object states by sampling random poses
         self._reset_init_object_state(env_ids=env_ids)
         self._object_state[env_ids] = self._init_object_state[env_ids]
+
+        ## Reset target place location
+        self.target_pos = self.default_target_pos.repeat(len(env_ids), 1).to(device=self.device)
+        self.target_pos[:, :2] = self.target_pos[:, :2] + \
+                                    1.0 * self.start_position_noise * \
+                                    (torch.rand(len(env_ids), 2, device=self.device) - 0.5)
 
         # # Reset the internal obs accordingly
         self._q[env_ids, :] = pos
@@ -428,6 +479,10 @@ class SoftGrasp(VecTask):
 
         self.progress_buf[env_ids] = 0
         self.reset_buf[env_ids] = 0
+
+        self.lift_reward_list = []
+        self.lift_height_list = []
+        self.place_reward_list = []
 
     def _reset_init_object_state(self, env_ids):
         # If env_ids is None, we reset all the envs
@@ -537,6 +592,16 @@ class SoftGrasp(VecTask):
         self.compute_observations()
         self.compute_reward(self.actions)
 
+        # draw a sphere of where the place location is
+        if self.viewer:
+            self.gym.clear_lines(self.viewer)
+            self.gym.refresh_rigid_body_state_tensor(self.sim)
+
+            for i in range(self.num_envs):
+                pos = gymapi.Vec3(self.target_pos[i][0], self.target_pos[i][1], self.target_pos[i][2])
+                target_pos = gymapi.Transform(pos)
+                gymutil.draw_lines(self.sphere_geom, self.gym, self.viewer, self.envs[i], target_pos)
+
 #####################################################################
 ###=========================jit functions=========================###
 #####################################################################
@@ -563,17 +628,32 @@ def compute_robot_reward(
 
     # reward for lifting object
     object_height = states["object_pos"][:, 2]
-    object_lifted = object_height > 0.45	# here is the reward that checks if object is lifted
+    object_lifted = object_height > 0.45  # here is the reward that checks if object is lifted
     lift_reward = object_lifted		# 1 for lifted; 0 for not
     lift_height = object_height - 0.3		# reward for how high it has been lifted.
     object_grasped = object_height > 0.35
 
-    # object rotation (object_quat) 
+    # place it in the second table
+    dist_to_target = torch.norm(states["target_pos_relative"], dim=-1)
+    # if object is close to target_pose
+    close_to_target = dist_to_target < 0.3
+    # place reward is dependent on the object being grasped or being close to the target (this is to prevent the
+    # robot from being stuck to the height reward)
+    place_reward = (1 - torch.tanh(1.0 * dist_to_target)) * torch.logical_or(object_grasped, close_to_target) * (object_grasped + close_to_target * 20)
+
+    lift_reward = torch.max(lift_reward, place_reward)
+
+    # time to release the object!
+    time_to_place = dist_to_target < 0.02
+    # reverse both initial rewards when the object reached place location (open hand and go away)
+    release_reward = (1/(dist_reward + 0.01) + 1/(fintip_reward + 0.01)) * time_to_place
+
+    # object rotation (object_quat)
     # check the z axis of the object and the grasp to see if it matches
     # use object_lifted as an 'if' to apply on when the object is lifted
     grasp_axis = tf_vector(states["object_quat"], grasp_up_axis)
     dot = torch.bmm(grasp_axis.view(num_envs, 1, 3), grasp_up_axis.view(num_envs, 3, 1)).squeeze(-1).squeeze(-1)
-    objrot_reward = object_grasped*torch.sign(dot) * dot ** 2
+    objrot_reward = 10*object_grasped*torch.sign(dot) * dot ** 2
 
     # Regularization on the actions
     action_penalty = torch.sum(actions ** 2, dim=-1)
@@ -584,9 +664,11 @@ def compute_robot_reward(
             + reward_settings["r_lift_scale"] * lift_reward \
             + reward_settings["r_lift_height_scale"] * lift_height \
             + reward_settings["r_actions_reg_scale"] * action_penalty \
-            + reward_settings["r_object_rot_scale"] * objrot_reward
+            + reward_settings["r_object_rot_scale"] * objrot_reward \
+            + reward_settings["r_place_scale"] * place_reward \
+            + reward_settings["r_release_scale"] * release_reward
 
-    # Compute resets
+        # Compute resets
     # reset_buf = torch.where((progress_buf >= max_episode_length - 1) | (lift_reward > 0), torch.ones_like(reset_buf), reset_buf)
     reset_buf = torch.where((progress_buf >= max_episode_length - 1), torch.ones_like(reset_buf), reset_buf)
 
@@ -595,9 +677,11 @@ def compute_robot_reward(
                    "Rotation Reward": reward_settings["r_rot_scale"] * rot_reward,
                    "Fingertips Reward": reward_settings["r_fintip_scale"] * fintip_reward,
                    "Lift Reward": reward_settings["r_lift_scale"] * lift_reward,
-                   "Lift Height Reward": reward_settings["r_lift_height_scale"] * lift_reward,
+                   "Lift Height Reward": reward_settings["r_lift_height_scale"] * lift_height,
                    "Action Regularization Reward": reward_settings["r_actions_reg_scale"] * action_penalty,
-                   "Object Rotation Reward": reward_settings["r_object_rot_scale"] * objrot_reward,}
+                   "Object Rotation Reward": reward_settings["r_object_rot_scale"] * objrot_reward,
+                   "Place Reward": reward_settings["r_place_scale"] * place_reward,
+                   "Release Reward": reward_settings["r_release_scale"] * release_reward,}
 
     return rewards, reset_buf, reward_dict
 
